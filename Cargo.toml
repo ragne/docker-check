@@ -1,0 +1,13 @@
+[package]
+name = "docker-check"
+version = "0.1.0"
+authors = ["l"]
+edition = "2018"
+
+[dependencies]
+dockworker = { git = "https://github.com/ragne/dockworker", branch = "feature/healthcheck" }
+# "0.0.7" 
+
+
+[features]
+debug = []
