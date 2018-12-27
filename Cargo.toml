@@ -6,6 +6,10 @@ edition = "2018"
 
 [dependencies]
 dockworker = { git = "https://github.com/ragne/dockworker", branch = "feature/healthcheck" }
+log = "0.4"
+fern = "0.5"
+chrono = "0.4"
+ctrlc = "3.1.1"
 # "0.0.7" 
 
 
