@@ -2,10 +2,11 @@
 name = "docker-check"
 version = "0.1.0"
 authors = ["l"]
-edition = "2018"
+edition = "2015"
 
 [dependencies]
-dockworker = { git = "https://github.com/ragne/dockworker", branch = "feature/healthcheck" }
+#dockworker = { git = "https://github.com/ragne/dockworker.git", rev = "664645ce55d19726149354d121b773f5b6d7cbaa" }
+dockworker = {path = "/home/l/work/dockworker"}
 log = "0.4"
 fern = "0.5"
 chrono = "0.4"
@@ -15,3 +16,28 @@ ctrlc = "3.1.1"
 
 [features]
 debug = []
+
+
+# The testing profile, used for `cargo test`.
+[profile.test]
+opt-level = 0
+debug = 2
+rpath = false
+lto = false
+debug-assertions = true
+codegen-units = 16
+panic = 'unwind'
+incremental = true
+overflow-checks = true
+
+# The benchmarking profile, used for `cargo bench` and `cargo test --release`.
+[profile.bench]
+opt-level = 3
+debug = false
+rpath = false
+lto = false
+debug-assertions = false
+codegen-units = 16
+panic = 'unwind'
+incremental = false
+overflow-checks = false

@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+mod docker_checker;
 mod server_blocking;
 extern crate ctrlc;
 
@@ -95,25 +96,39 @@ fn handle_client(mut stream: TcpStream, finished: &Arc<AtomicBool>) {
     }
 }
 
-fn listen(finished: Arc<AtomicBool>) -> io::Result<()> {
-    let docker = Docker::connect_with_http("http://localhost:2376").unwrap();
+use dockworker::container::HealthState;
+static mut tries: i32 = 0;
 
-    while !finished.load(Ordering::Relaxed) {
-        let filter = ContainerFilters::new();
-        let containers = docker.list_containers(None, None, None, filter).unwrap();
-        containers.iter().for_each(|c| {
-            let res = docker.container_info(&c).unwrap();
-            debug!("{:?}: {:?}", res.Name, res.State.Health.Status);
-        });
-        thread::sleep(Duration::from_secs(2));
-    }
+fn listen(finished: Arc<AtomicBool>) -> io::Result<()> {
+    let dc = docker_checker::DockerChecker::new("unix:///var/run/docker.sock", finished).unwrap();
+    dc.watch_for(
+        Duration::from_secs(2),
+        |client: &Docker, container: &dockworker::container::Container| {
+            let info = client.container_info(container).unwrap();
+            let container_state = info.State.Health.unwrap().Status;
+            if container_state == HealthState::Healthy {
+                println!("Container is okay:");
+                unsafe { tries = 0; }
+            } else if container_state == HealthState::Unhealthy {
+                println!("Container is not okay, restarting; Giving 5 seconds to stop");
+                client
+                    .restart_container(&container.Id, Duration::from_secs(5))
+                    .unwrap();
+                unsafe {tries += 1; }
+            } else {
+                println!("Container is in state: {}", container_state);
+            }
+        },
+    )
+    .unwrap();
+
     Ok(())
 }
 
 fn main() {
     setup_logger().unwrap();
 
-    let mut s = server_blocking::Server::new("127.0.0.1:8000", 0);
+    let mut s = server_blocking::Server::new("127.0.0.1:8000", 8);
     let f = s.get_finished();
     let f2 = s.get_finished();
     ctrlc::set_handler(move || {
