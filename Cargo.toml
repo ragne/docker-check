@@ -5,8 +5,8 @@ authors = ["l"]
 edition = "2015"
 
 [dependencies]
-#dockworker = { git = "https://github.com/ragne/dockworker.git", rev = "664645ce55d19726149354d121b773f5b6d7cbaa" }
-dockworker = {path = "/home/l/work/dockworker"}
+dockworker = { git = "https://github.com/ragne/dockworker.git", branch="feature/healthcheck" }
+#dockworker = {path = "/home/l/work/dockworker"}
 log = "0.4"
 fern = "0.5"
 chrono = "0.4"

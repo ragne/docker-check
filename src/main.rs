@@ -97,23 +97,31 @@ fn handle_client(mut stream: TcpStream, finished: &Arc<AtomicBool>) {
 }
 
 use dockworker::container::HealthState;
+use docker_checker::{Stats, ContainerStats};
 static mut tries: i32 = 0;
 
 fn listen(finished: Arc<AtomicBool>) -> io::Result<()> {
-    let dc = docker_checker::DockerChecker::new("unix:///var/run/docker.sock", finished).unwrap();
+    let mut  dc = docker_checker::DockerChecker::new("unix:///var/run/docker.sock", finished).unwrap();
     dc.watch_for(
         Duration::from_secs(2),
-        |client: &Docker, container: &dockworker::container::Container| {
+        |client: &Docker, container: &dockworker::container::Container, stats: &mut Stats| {
             let info = client.container_info(container).unwrap();
             let container_state = info.State.Health.unwrap().Status;
+            let container_stats = stats.entry(info.Name.clone()).or_insert(ContainerStats::default());
             if container_state == HealthState::Healthy {
-                println!("Container is okay:");
+                println!("Container {} is okay: {:?}", &info.Name, container_stats);
+                container_stats.count += 1;
                 unsafe { tries = 0; }
             } else if container_state == HealthState::Unhealthy {
-                println!("Container is not okay, restarting; Giving 5 seconds to stop");
+                println!("Container {} is not okay, restarting; After 5 failures it will be restarted! Current count: {}", &info.Name, container_stats.sequent_failures);
+                container_stats.sequent_failures += 1;
+                if container_stats.sequent_failures == 5 {
                 client
                     .restart_container(&container.Id, Duration::from_secs(5))
                     .unwrap();
+                    container_stats.restarts += 1; 
+                    container_stats.sequent_failures = 0;
+                }
                 unsafe {tries += 1; }
             } else {
                 println!("Container is in state: {}", container_state);
