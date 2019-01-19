@@ -17,13 +17,27 @@ pub struct DockerConfig {
 #[derive(Debug, Deserialize)]
 pub struct ContainersConfig {
   pub filter_by: String,
+  pub consecutive_failures: u16,
+  pub hard_failures: u16,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AwsAsgConfig {
+  pub healthcheck: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AwsConfig {
+  pub enabled: bool,
+  pub asg: AwsAsgConfig,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
   pub logging: LoggingConfig,
   pub docker: DockerConfig,
-  pub containers: ContainersConfig
+  pub containers: ContainersConfig,
+  pub aws: AwsConfig
 }
 
 pub fn get_settings() -> Result<Config, String> {
@@ -51,7 +65,13 @@ tls = true
 
 [containers]
 filter_by = ".*"
-"###;
+consecutive_failures = 5
+hard_failures = 3
+
+[aws]
+enabled = true
+[aws.asg]
+healthcheck = true"###;
     let mut settings = configuration::Config::default();
     settings.merge(configuration::File::from_str(config_str,configuration::FileFormat::Toml)).unwrap();
     settings.try_into::<Config>().unwrap()

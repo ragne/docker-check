@@ -1,4 +1,3 @@
-
 [logging]
 checker = "debug"
 default = "warn"
@@ -9,3 +8,10 @@ tls = true
 
 [containers]
 filter_by = ".*"
+consecutive_failures = 5
+hard_failures = 3
+
+[aws]
+enabled = true
+[aws.asg]
+healthcheck = true

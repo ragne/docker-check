@@ -7,13 +7,17 @@ use std::thread;
 use std::time::Duration;
 mod docker_checker;
 mod server_blocking;
-extern crate ctrlc;
 extern crate config as configuration;
+extern crate ctrlc;
 
+extern crate regex;
 extern crate serde;
 
 #[macro_use]
 extern crate serde_derive;
+
+#[macro_use]
+extern crate lazy_static;
 
 #[macro_use]
 extern crate log;
@@ -24,9 +28,17 @@ mod threadpool;
 extern crate dockworker;
 pub mod config;
 
-use config::{Config, ContainersConfig, DockerConfig, LoggingConfig};
-use std::str::FromStr;
+use config::LoggingConfig;
 use dockworker::{container::ContainerFilters, Docker};
+use std::str::FromStr;
+
+lazy_static! {
+    static ref SETTINGS: config::Config = {
+        config::get_settings()
+            .map_err(|e| warn!("Cannot read config. Error: {}", e))
+            .unwrap_or_default()
+    };
+}
 
 pub fn setup_logger(config: &LoggingConfig) -> Result<(), fern::InitError> {
     fern::Dispatch::new()
@@ -40,7 +52,10 @@ pub fn setup_logger(config: &LoggingConfig) -> Result<(), fern::InitError> {
             ))
         })
         .level(log::LevelFilter::from_str(&config.default).unwrap_or(log::LevelFilter::Warn))
-        .level_for("docker_check", log::LevelFilter::from_str(&config.checker).unwrap_or(log::LevelFilter::Warn))
+        .level_for(
+            "docker_check",
+            log::LevelFilter::from_str(&config.checker).unwrap_or(log::LevelFilter::Warn),
+        )
         .chain(std::io::stdout())
         .chain(fern::log_file("output.log")?)
         .apply()?;
@@ -105,70 +120,75 @@ fn handle_client(mut stream: TcpStream, finished: &Arc<AtomicBool>) {
     }
 }
 
+use docker_checker::{ContainerStats, Stats};
 use dockworker::container::HealthState;
-use docker_checker::{Stats, ContainerStats};
 
-
-static mut tries: i32 = 0;
-
-fn listen(finished: Arc<AtomicBool>) -> io::Result<()> {
-    let mut  dc = docker_checker::DockerChecker::new("unix:///var/run/docker.sock", finished).unwrap();
+fn listen(finished: Arc<AtomicBool>) -> Result<(), String> {
+    let mut dc =
+        docker_checker::DockerChecker::new(&SETTINGS.docker.connect_uri, finished, 
+        &*SETTINGS)?;
     dc.watch_for(
         Duration::from_secs(2),
         |client: &Docker, container: &dockworker::container::Container, stats: &mut Stats| {
-            let info = client.container_info(container).unwrap();
+            let info = client.container_info(container)
+                       .map_err(|e| error!("Error getting info: {}", e)).unwrap();
             let container_state = match info.State.Health{
                 Some(health_state) => health_state.Status,
                 None => { warn!("Container {} doesn't have a healthcheck, skipping..", &info.Name); return }
             };
             let container_stats = stats.entry(info.Name.clone()).or_insert(ContainerStats::default());
             if container_state == HealthState::Healthy {
-                println!("Container {} is okay: {:?}", &info.Name, container_stats);
+                debug!("Container {} is okay: {:?}", &info.Name, container_stats);
                 container_stats.count += 1;
-                unsafe { tries = 0; }
             } else if container_state == HealthState::Unhealthy {
-                println!("Container {} is not okay, restarting; After 5 failures it will be restarted! Current count: {}", &info.Name, container_stats.sequent_failures);
-                container_stats.sequent_failures += 1;
-                if container_stats.sequent_failures == 5 {
+                debug!("Container {} is not okay, restarting; After 5 failures it will be restarted! Current count: {}", &info.Name, container_stats.consecutive_failures);
+                container_stats.consecutive_failures += 1;
+                if container_stats.consecutive_failures == SETTINGS.containers.consecutive_failures {
                 client
                     .restart_container(&container.Id, Duration::from_secs(5))
                     .unwrap();
-                    container_stats.restarts += 1; 
-                    container_stats.sequent_failures = 0;
+                    container_stats.restarts += 1;
+                    container_stats.consecutive_failures = 0;
                 }
-                unsafe {tries += 1; }
             } else {
-                println!("Container is in state: {}", container_state);
+                debug!("Container is in state: {}", container_state);
             }
         },
     )
-    .unwrap();
+    .map_err(|e| error!("Error getting info: {}", e)).unwrap();
 
     Ok(())
 }
 
-
-
 fn main() {
-    let settings = config::get_settings().map_err(|e| warn!("Cannot read config. Error: {}", e)).unwrap_or_default();
-    println!("Settings: {:?}", settings);
+    let settings = &SETTINGS;
+    println!("Settings: {:?}", **settings);
     setup_logger(&settings.logging).unwrap();
-    
-    
 
-    let mut s = server_blocking::Server::new("127.0.0.1:8000", 0);
-    let f = s.get_finished();
-    let f2 = s.get_finished();
+    // no networking for now
+    // let mut s = server_blocking::Server::new("127.0.0.1:8000", 0);
+    let finished = Arc::new(AtomicBool::new(false));
+    let f2 = finished.clone();
     ctrlc::set_handler(move || {
         f2.store(true, Ordering::SeqCst);
     })
     .expect("Error setting Ctrl-C handler");
-    thread::spawn(move || {
-        s.serve(handle_client);
-    });
+    // thread::spawn(move || {
+    //     s.serve(handle_client);
+    // });
 
-    listen(f.clone()).unwrap();
+    /* 
+        TODO: the following
+            ! Log to the syslog
+            ! Add rusoto and send-healthcheck-request
+            ! Use `hard_failures` from config
+            ! Ability to run a script if `hard_failures` from config is reached
+    */
+
+    listen(finished.clone())
+        .map_err(|e| error!("Fatal: {}", e))
+        .unwrap_or(());
     info!("Done");
     info!("Stopping~!");
-    f.store(true, Ordering::SeqCst);
+    finished.store(true, Ordering::SeqCst);
 }
