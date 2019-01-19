@@ -8,6 +8,12 @@ use std::time::Duration;
 mod docker_checker;
 mod server_blocking;
 extern crate ctrlc;
+extern crate config as configuration;
+
+extern crate serde;
+
+#[macro_use]
+extern crate serde_derive;
 
 #[macro_use]
 extern crate log;
@@ -16,10 +22,13 @@ extern crate fern;
 
 mod threadpool;
 extern crate dockworker;
+pub mod config;
 
+use config::{Config, ContainersConfig, DockerConfig, LoggingConfig};
+use std::str::FromStr;
 use dockworker::{container::ContainerFilters, Docker};
 
-pub fn setup_logger() -> Result<(), fern::InitError> {
+pub fn setup_logger(config: &LoggingConfig) -> Result<(), fern::InitError> {
     fern::Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(
@@ -30,8 +39,8 @@ pub fn setup_logger() -> Result<(), fern::InitError> {
                 message
             ))
         })
-        .level(log::LevelFilter::Warn)
-        .level_for("docker_check", log::LevelFilter::Trace)
+        .level(log::LevelFilter::from_str(&config.default).unwrap_or(log::LevelFilter::Warn))
+        .level_for("docker_check", log::LevelFilter::from_str(&config.checker).unwrap_or(log::LevelFilter::Warn))
         .chain(std::io::stdout())
         .chain(fern::log_file("output.log")?)
         .apply()?;
@@ -98,6 +107,8 @@ fn handle_client(mut stream: TcpStream, finished: &Arc<AtomicBool>) {
 
 use dockworker::container::HealthState;
 use docker_checker::{Stats, ContainerStats};
+
+
 static mut tries: i32 = 0;
 
 fn listen(finished: Arc<AtomicBool>) -> io::Result<()> {
@@ -106,7 +117,10 @@ fn listen(finished: Arc<AtomicBool>) -> io::Result<()> {
         Duration::from_secs(2),
         |client: &Docker, container: &dockworker::container::Container, stats: &mut Stats| {
             let info = client.container_info(container).unwrap();
-            let container_state = info.State.Health.unwrap().Status;
+            let container_state = match info.State.Health{
+                Some(health_state) => health_state.Status,
+                None => { warn!("Container {} doesn't have a healthcheck, skipping..", &info.Name); return }
+            };
             let container_stats = stats.entry(info.Name.clone()).or_insert(ContainerStats::default());
             if container_state == HealthState::Healthy {
                 println!("Container {} is okay: {:?}", &info.Name, container_stats);
@@ -133,10 +147,16 @@ fn listen(finished: Arc<AtomicBool>) -> io::Result<()> {
     Ok(())
 }
 
-fn main() {
-    setup_logger().unwrap();
 
-    let mut s = server_blocking::Server::new("127.0.0.1:8000", 8);
+
+fn main() {
+    let settings = config::get_settings().map_err(|e| warn!("Cannot read config. Error: {}", e)).unwrap_or_default();
+    println!("Settings: {:?}", settings);
+    setup_logger(&settings.logging).unwrap();
+    
+    
+
+    let mut s = server_blocking::Server::new("127.0.0.1:8000", 0);
     let f = s.get_finished();
     let f2 = s.get_finished();
     ctrlc::set_handler(move || {

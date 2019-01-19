@@ -1,0 +1,11 @@
+
+[logging]
+checker = "debug"
+default = "warn"
+
+[docker]
+connect_uri = "unix:///var/run/docker.sock"
+tls = true
+
+[containers]
+filter_by = ".*"
