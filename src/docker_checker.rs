@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+use std::rc::Rc;
+use std::cell::RefCell;
 
 #[derive(Default, Debug)]
 pub struct ContainerStats {
@@ -13,21 +15,19 @@ pub struct ContainerStats {
     pub restarts: u32,
     pub consecutive_failures: u16,
 }
-pub type Stats = HashMap<String, ContainerStats>;
+
+// * Possible optimization: make this hashmap transient (having a entries with activity time, and if they aren't active for $time then purge them from hashmap)
+pub type Stats = Rc<RefCell<HashMap<String, ContainerStats>>>;
 
 pub struct DockerChecker<'a> {
     is_finished: Arc<AtomicBool>,
-    client: Docker,
-    stats: Stats,
-    config: &'a Config,
+    pub client: Docker,
+    pub stats: Stats,
+    pub config: &'a Config,
 }
 
 impl<'a> DockerChecker<'a> {
-    pub fn new(
-        connect_str: &str,
-        finished: Arc<AtomicBool>,
-        config: &'a Config,
-    ) -> Result<Self, String> {
+    pub fn new(connect_str: &str, finished: Arc<AtomicBool>, config: &'a Config) -> Result<Self, String> {
         let client;
         if connect_str.starts_with("http") {
             client = Docker::connect_with_http(connect_str).map_err(|e| e.to_string())?;
@@ -42,7 +42,7 @@ impl<'a> DockerChecker<'a> {
         Ok(Self {
             client,
             is_finished: finished,
-            stats: HashMap::new(),
+            stats: Rc::new(RefCell::new(HashMap::new())),
             config: &config,
         })
     }
@@ -50,29 +50,37 @@ impl<'a> DockerChecker<'a> {
     pub fn watch_for(
         &mut self,
         sleep_for: Duration,
-        callback: fn(&Docker, &Container, &mut self::Stats) -> (),
+        callback: fn(&DockerChecker, &Container) -> (),
     ) -> Result<(), String> {
         let re = Regex::new(&self.config.containers.filter_by).unwrap();
+        let apply_to = &self.config.containers.apply_filter_to;
         while !self.is_finished.load(Ordering::Relaxed) {
             let filter = ContainerFilters::new();
             let containers = self
                 .client
                 .list_containers(None, None, None, filter)
-                .map_err(|e| error!("Error getting info: {}", e))
+                .map_err(|e| error!("Error listing containers: {}", e))
                 .unwrap_or(Vec::new());
             containers
                 .iter()
                 .filter(|&i| {
-                    i.Names
-                        .iter()
-                        .filter(|&name| re.is_match(name))
-                        .peekable()
-                        .peek()
-                        .is_some()
+                    let mut result = false;
+                    if apply_to.should_filter_names() {
+                        result = i.Names
+                            .iter()
+                            .filter(|&name| re.is_match(name))
+                            .peekable()
+                            .peek()
+                            .is_some();
+                    } else if apply_to.should_filter_images() {
+                        result |= re.is_match(&i.Image);
+                    }
+                    result
+                    
                 })
                 .for_each(|c| {
-                    debug!("Got container {:?}: calling callback", c);
-                    callback(&self.client, &c, &mut self.stats);
+                    trace!("Got container {:?}: calling callback", c);
+                    callback(&self, &c);
                 });
             thread::sleep(sleep_for);
         }

@@ -12,3 +12,4 @@ Cargo.lock
 output.log
 
 .idea
+.vscode

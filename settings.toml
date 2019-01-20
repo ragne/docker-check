@@ -4,14 +4,20 @@ default = "warn"
 
 [docker]
 connect_uri = "unix:///var/run/docker.sock"
+# currently tls isn't a priority, but adding it should be simple
 tls = true
 
 [containers]
 filter_by = ".*"
+apply_filter_to = ['name', 'image']
 consecutive_failures = 5
 hard_failures = 3
+# can be absolute or relative path
+# currently run with "$run_on_failure %c" 
+# where %c is container-id
+run_on_failure = "example/notify-slack.sh"
 
 [aws]
 enabled = true
-[aws.asg]
-healthcheck = true
+  [aws.asg]
+  healthcheck = true
