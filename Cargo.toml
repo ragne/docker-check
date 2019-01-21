@@ -17,6 +17,7 @@ serde = "^1.0.8"
 lazy_static = "1.2.0"
 regex = "1"
 os_pipe = "0.8.0"
+human-panic = "1.0.1"
 # "0.0.7" 
 
 
