@@ -28,7 +28,6 @@ pub mod config;
 mod run_command;
 
 use config::LoggingConfig;
-use dockworker::{container::ContainerFilters, Docker};
 use std::str::FromStr;
 
 lazy_static! {
@@ -61,15 +60,15 @@ pub fn setup_logger(config: &LoggingConfig) -> Result<(), fern::InitError> {
     Ok(())
 }
 
-use docker_checker::{ContainerStats, Stats, DockerChecker};
-use dockworker::container::HealthState;
+use docker_checker::{ContainerStats, DockerChecker};
+use dockworker::container::{HealthState, Container};
 
 
 fn check_docker_containers(finished: Arc<AtomicBool>) -> Result<(), String> {
     let mut dc = DockerChecker::new(&SETTINGS.docker.connect_uri, finished, &*SETTINGS)?;
     dc.watch_for(
         Duration::from_secs(2),
-        |this: &DockerChecker, container: &dockworker::container::Container| {
+        |this: &DockerChecker, container: &Container| {
             let info;
             let client = &this.client;
             let stats = &mut this.stats.borrow_mut();
