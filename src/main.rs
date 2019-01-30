@@ -11,6 +11,9 @@ extern crate serde;
 extern crate os_pipe;
 
 #[macro_use]
+extern crate human_panic;
+
+#[macro_use]
 extern crate serde_derive;
 
 #[macro_use]
@@ -150,9 +153,12 @@ fn check_docker_containers(finished: Arc<AtomicBool>) -> Result<(), String> {
 }
 
 fn main() {
+    // At least that will allow some reports (hope it'll never fire though)
+    // But there are a bit of unwraps scattered over the place
+    setup_panic!();
     let settings = &SETTINGS;
-    println!("Settings: {:?}", **settings);
-    setup_logger(&settings.logging).unwrap();
+    debug!("Got settings: {:?}", **settings);
+    setup_logger(&settings.logging).expect("Cannot setup logger. Shouldn't be possible in most cases");
 
     // no networking for now
     let finished = Arc::new(AtomicBool::new(false));
