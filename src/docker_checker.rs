@@ -1,13 +1,13 @@
 use super::config::Config;
 use dockworker::{container::Container, container::ContainerFilters, Docker};
 use regex::Regex;
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use std::rc::Rc;
-use std::cell::RefCell;
 
 #[derive(Default, Debug)]
 pub struct ContainerStats {
@@ -73,7 +73,8 @@ impl<'a> DockerChecker<'a> {
                 .filter(|&i| {
                     let mut result = false;
                     if apply_to.should_filter_names() {
-                        result = i.Names
+                        result = i
+                            .Names
                             .iter()
                             .filter(|&name| re.is_match(name))
                             .peekable()
@@ -83,7 +84,6 @@ impl<'a> DockerChecker<'a> {
                         result |= re.is_match(&i.Image);
                     }
                     result
-                    
                 })
                 .for_each(|c| {
                     trace!("Got container {:?}: calling callback", c);

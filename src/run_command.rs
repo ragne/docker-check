@@ -22,21 +22,23 @@ pub fn run_command_windows(cmd: &str, args: &Vec<String>) -> CommandResult {
     .stderr(stderr)
     .args(args)
     .spawn();
-    h?.wait_with_output().map(|output: Output| {
-    CommandOutput {
-      output: format!("{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr)),
-      status: output.status
-    }
+  h?.wait_with_output().map(|output: Output| CommandOutput {
+    output: format!(
+      "{}\n{}",
+      String::from_utf8_lossy(&output.stdout),
+      String::from_utf8_lossy(&output.stderr)
+    ),
+    status: output.status,
   })
 }
 
 pub fn run_command(cmd: &str, args: &Vec<String>) -> io::Result<CommandOutput> {
   if cfg!(target_os = "linux") {
-      run_command_unix(cmd, args)
-    } else {
-      // windows support is currently untested and probably not good
-      run_command_windows(cmd, args)
-    }
+    run_command_unix(cmd, args)
+  } else {
+    // windows support is currently untested and probably not good
+    run_command_windows(cmd, args)
+  }
 }
 
 pub fn run_command_unix(cmd: &str, args: &Vec<String>) -> io::Result<CommandOutput> {
