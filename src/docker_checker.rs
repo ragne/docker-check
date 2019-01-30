@@ -11,6 +11,8 @@ use std::cell::RefCell;
 
 #[derive(Default, Debug)]
 pub struct ContainerStats {
+    // (4294967295 * 2) / 60 / 60 / 24 / 365
+    // (u32.MAX * 2 second tick) / mins / hours / days / years = 272 years should be enough for everyone
     pub count: u32,
     pub restarts: u32,
     pub consecutive_failures: u16,
@@ -28,6 +30,16 @@ pub struct DockerChecker<'a> {
 
 impl<'a> DockerChecker<'a> {
     pub fn new(connect_str: &str, finished: Arc<AtomicBool>, config: &'a Config) -> Result<Self, String> {
+        let client = DockerChecker::get_new_client(connect_str)?;
+        Ok(Self {
+            client,
+            is_finished: finished,
+            stats: Rc::new(RefCell::new(HashMap::new())),
+            config: &config,
+        })
+    }
+
+    pub fn get_new_client(connect_str: &str) -> Result<Docker, String> {
         let client;
         if connect_str.starts_with("http") {
             client = Docker::connect_with_http(connect_str).map_err(|e| e.to_string())?;
@@ -39,12 +51,7 @@ impl<'a> DockerChecker<'a> {
                 connect_str
             ));
         };
-        Ok(Self {
-            client,
-            is_finished: finished,
-            stats: Rc::new(RefCell::new(HashMap::new())),
-            config: &config,
-        })
+        Ok(client)
     }
 
     pub fn watch_for(

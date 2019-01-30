@@ -1,5 +1,3 @@
-
-use std::collections::HashMap;
 use serde::{Deserialize, Deserializer};
 
 #[derive(Debug, Deserialize)]
@@ -32,7 +30,10 @@ impl<'de> Deserialize<'de> for ApplyTo {
 }
 
 impl ApplyTo {
-    fn from_vec(v: &Vec<String>) -> std::result::Result<Self, String> {
+    fn from_vec(v: &Vec<String>) -> std::result::Result<Self, ()> {
+        if v.len() == 0 {
+          return Ok(ApplyTo::DontApply)
+        };
         let mut last = None;
         v.iter().for_each(|x| 
           match x.as_str() {
@@ -53,7 +54,7 @@ impl ApplyTo {
             _ => { last = Some(ApplyTo::DontApply)}
           }
         );
-        last.ok_or(format!("Cannot create a variant from given vec: {:?}", v))
+        last.ok_or(())
     }
 
     pub fn should_filter_images(&self) -> bool {
@@ -108,27 +109,35 @@ let mut settings = configuration::Config::default();
 
 impl Default for Config {
   fn default() -> Self {
-    let config_str = r###"
-[logging]
-checker = "debug"
-default = "warn"
-
-[docker]
-connect_uri = "unix:///var/run/docker.sock"
-tls = true
-
-[containers]
-filter_by = ".*"
-apply_filter_to = ['name', 'image']
-consecutive_failures = 5
-hard_failures = 3
-
-[aws]
-enabled = true
-[aws.asg]
-healthcheck = true"###;
+    let config_str = include_str!("../settings.toml");
     let mut settings = configuration::Config::default();
     settings.merge(configuration::File::from_str(config_str,configuration::FileFormat::Toml)).unwrap();
     settings.try_into::<Config>().unwrap()
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  #[test]
+  fn create_config_from_default() {
+    let _ = Config::default();
+  }
+
+  #[test]
+  fn get_settings_should_work() {
+    get_settings().unwrap();
+  }
+
+  #[test]
+  fn apply_to_test() {
+    let mut v = Vec::new();
+    assert_eq!(ApplyTo::from_vec(&v).unwrap(), ApplyTo::DontApply);
+    v.push("image".to_string());
+    assert_eq!(ApplyTo::from_vec(&v).unwrap(), ApplyTo::Image);
+    v.push("name".to_string());
+    assert_eq!(ApplyTo::from_vec(&v).unwrap(), ApplyTo::Both);
+    v.remove(0);
+    assert_eq!(ApplyTo::from_vec(&v).unwrap(), ApplyTo::Name);
   }
 }

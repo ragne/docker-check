@@ -4,7 +4,7 @@ use std::io::prelude::*;
 use std::process::ExitStatus;
 use std::process::{Command, Output, Stdio};
 
-type CommandResult = io::Result<Output>;
+type CommandResult = io::Result<CommandOutput>;
 
 #[derive(Debug)]
 pub struct CommandOutput {
@@ -12,7 +12,7 @@ pub struct CommandOutput {
   pub status: ExitStatus,
 }
 
-pub fn run_command(cmd: &str, args: &Vec<String>) -> CommandResult {
+pub fn run_command_windows(cmd: &str, args: &Vec<String>) -> CommandResult {
   let stdout = Stdio::piped();
   let stderr = Stdio::piped();
 
@@ -22,7 +22,21 @@ pub fn run_command(cmd: &str, args: &Vec<String>) -> CommandResult {
     .stderr(stderr)
     .args(args)
     .spawn();
-  h?.wait_with_output()
+    h?.wait_with_output().map(|output: Output| {
+    CommandOutput {
+      output: format!("{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr)),
+      status: output.status
+    }
+  })
+}
+
+pub fn run_command(cmd: &str, args: &Vec<String>) -> io::Result<CommandOutput> {
+  if cfg!(target_os = "linux") {
+      run_command_unix(cmd, args)
+    } else {
+      // windows support is currently untested and probably not good
+      run_command_windows(cmd, args)
+    }
 }
 
 pub fn run_command_unix(cmd: &str, args: &Vec<String>) -> io::Result<CommandOutput> {

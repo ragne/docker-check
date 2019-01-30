@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 mod docker_checker;
-mod server_blocking;
 extern crate config as configuration;
 extern crate ctrlc;
 
@@ -22,7 +21,6 @@ extern crate log;
 extern crate chrono;
 extern crate fern;
 
-mod threadpool;
 extern crate dockworker;
 pub mod config;
 mod run_command;
@@ -99,8 +97,16 @@ fn check_docker_containers(finished: Arc<AtomicBool>) -> Result<(), String> {
                 container_stats.consecutive_failures += 1;
                 
                 if container_stats.consecutive_failures - 1 == config.containers.consecutive_failures {
-                    // in worst case blocks the whole thread for timeout seconds
-                    client.restart_container(&container.Id, Duration::from_secs(5)).unwrap();
+                    let failed_container = container.Id.clone();
+                    thread::spawn(move || {
+                        // Won't block the main thread anymore, rarely can fail.
+                        let client_for_restart = DockerChecker::get_new_client(&SETTINGS.docker.connect_uri);
+                        match client_for_restart {
+                            Ok(client) => client.restart_container(&failed_container, Duration::from_secs(5)).unwrap(),
+                            Err(e) => error!("Cannot get the docker client. URI: {}, error: {}", &SETTINGS.docker.connect_uri, e)
+                        }
+                    });
+                    
                     container_stats.restarts += 1;
                     container_stats.consecutive_failures = 0;
                     
@@ -109,7 +115,7 @@ fn check_docker_containers(finished: Arc<AtomicBool>) -> Result<(), String> {
                         args.push(container.Id.clone());
                         let cmd = config.containers.run_on_failure.clone();
                         thread::spawn(move || {
-                            let result = run_command::run_command_unix(&cmd, &args);
+                            let result = run_command::run_command(&cmd, &args);
                             match result {
                                 Ok(output) => {
                                     if !output.status.success() {
@@ -160,8 +166,6 @@ fn main() {
         TODO: the following
             ! Log to the syslog
             ! Add rusoto and send-healthcheck-request
-            ! Use `hard_failures` from config
-            ! Ability to run a script if `hard_failures` from config is reached
     */
 
     check_docker_containers(finished.clone())
