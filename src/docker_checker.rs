@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Default, Debug)]
 pub struct ContainerStats {
@@ -16,15 +16,16 @@ pub struct ContainerStats {
     pub count: u32,
     pub restarts: u32,
     pub consecutive_failures: u16,
+    pub not_seen_since: Option<Instant>,
 }
 
 // * Possible optimization: make this hashmap transient (having a entries with activity time, and if they aren't active for $time then purge them from hashmap)
-pub type Stats = Rc<RefCell<HashMap<String, ContainerStats>>>;
+pub type Stats<'a> = Rc<RefCell<HashMap<String, ContainerStats>>>;
 
 pub struct DockerChecker<'a> {
     is_finished: Arc<AtomicBool>,
     pub client: Docker,
-    pub stats: Stats,
+    pub stats: Stats<'a>,
     pub config: &'a Config,
 }
 
@@ -59,9 +60,12 @@ impl<'a> DockerChecker<'a> {
         sleep_for: Duration,
         callback: fn(&DockerChecker, &Container) -> (),
     ) -> Result<(), String> {
-        let re = Regex::new(&self.config.containers.filter_by).unwrap();
+        let re = Regex::new(&self.config.containers.filter_by).map_err(|e| e.to_string())?;
+        let self_re = Regex::new(&self.config.containers.filter_self).map_err(|e| e.to_string())?;
         let apply_to = &self.config.containers.apply_filter_to;
+        let mut active_containers: Vec<String> = Vec::new();
         while !self.is_finished.load(Ordering::Relaxed) {
+            active_containers.clear();
             let filter = ContainerFilters::new();
             let containers = self
                 .client
@@ -72,23 +76,51 @@ impl<'a> DockerChecker<'a> {
                 .iter()
                 .filter(|&i| {
                     let mut result = false;
+                    if apply_to.should_filter_labels() {
+                        result = match i.Labels {
+                            Some(ref map) => {
+                                map.keys().filter(|&name| re.is_match(name) || self_re.is_match(name))
+                            .peekable()
+                            .peek()
+                            .is_some()
+                            },
+                            None => false
+                        }
+                    }
+
                     if apply_to.should_filter_names() {
+                        
                         result = i
                             .Names
                             .iter()
-                            .filter(|&name| re.is_match(name))
+                            .filter(|&name| re.is_match(name) || self_re.is_match(name))
                             .peekable()
                             .peek()
                             .is_some();
                     } else if apply_to.should_filter_images() {
-                        result |= re.is_match(&i.Image);
+                        result |= re.is_match(&i.Image) || self_re.is_match(&i.Image) ;
                     }
                     result
                 })
                 .for_each(|c| {
+                    active_containers.push(c.Id.clone());
                     trace!("Got container {:?}: calling callback", c);
                     callback(&self, &c);
                 });
+            self.stats.borrow_mut().retain(|k, v| {
+                let result = active_containers.contains(&k);
+                if !result {
+                    let not_seen_for = v.not_seen_since.get_or_insert(Instant::now());
+                    if Instant::now().duration_since(*not_seen_for)
+                        >= Duration::from_secs(self.config.docker.purge_unseen)
+                    {
+                        warn!("Retain container {} from because it hasn't been active for at least {} seconds!", k, self.config.docker.purge_unseen);
+                    } else {
+                        return !result;
+                    }
+                }
+                result
+            });
             thread::sleep(sleep_for);
         }
         Ok(())

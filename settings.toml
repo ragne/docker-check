@@ -1,14 +1,17 @@
 [logging]
-checker = "info"
+checker = "debug"
 default = "warn"
 
 [docker]
 connect_uri = "unix:///var/run/docker.sock"
 # currently tls isn't a priority, but adding it should be simple
 tls = true
+# purge containers from stats map if they aren't seen for purge_unseen seconds
+purge_unseen = 100
 
 [containers]
 filter_by = ".*"
+filter_self = "/docker-checker"
 apply_filter_to = ['name', 'image']
 consecutive_failures = 5
 hard_failures = 3

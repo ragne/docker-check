@@ -1,4 +1,5 @@
 use serde::{Deserialize, Deserializer};
+use std::time::{Duration};
 
 #[derive(Debug, Deserialize)]
 pub struct LoggingConfig {
@@ -10,14 +11,18 @@ pub struct LoggingConfig {
 pub struct DockerConfig {
   pub connect_uri: String,
   pub tls: bool,
+  pub purge_unseen: u64,
 }
 
 #[derive(Debug, PartialEq)]
-pub enum ApplyTo {
-  Name,
-  Image,
-  Both,
-  DontApply,
+pub struct ApplyTo {
+  // Name,
+  // Image,
+  // Label,
+  // Both,
+  // All,
+  // DontApply,
+  mask: u8
 }
 
 impl<'de> Deserialize<'de> for ApplyTo {
@@ -31,37 +36,40 @@ impl<'de> Deserialize<'de> for ApplyTo {
 }
 
 impl ApplyTo {
+    #[inline]
+    fn match_bit(&self, idx: u8) -> bool {
+      self.mask >> idx & 1 == 1
+    }
+
   fn from_vec(v: &Vec<String>) -> std::result::Result<Self, ()> {
-    if v.len() == 0 {
-      return Ok(ApplyTo::DontApply);
-    };
-    let mut last = None;
+    let mut apply_bytes: u8 = 0b0000_0000;
+    // Name, image, label
     v.iter().for_each(|x| match x.as_str() {
       "name" => {
-        if last.is_none() {
-          last = Some(ApplyTo::Name)
-        } else if last.is_some() && last.take().unwrap() == ApplyTo::Image {
-          last = Some(ApplyTo::Both)
-        }
+        apply_bytes |= 0b0000_0001;
       }
       "image" => {
-        if last.is_none() {
-          last = Some(ApplyTo::Image)
-        } else if last.is_some() && last.take().unwrap() == ApplyTo::Name {
-          last = Some(ApplyTo::Both)
-        }
+        apply_bytes |= 0b0000_0010;
+      },
+      "label" => {
+        apply_bytes |= 0b0000_0100;
       }
-      _ => last = Some(ApplyTo::DontApply),
+      _ => {},
     });
-    last.ok_or(())
+
+    Ok(Self{ mask: apply_bytes})
   }
 
   pub fn should_filter_images(&self) -> bool {
-    *self == ApplyTo::Image || *self == ApplyTo::Both
+    self.match_bit(1)
   }
 
   pub fn should_filter_names(&self) -> bool {
-    *self == ApplyTo::Name || *self == ApplyTo::Both
+    self.match_bit(0)
+  }
+
+  pub fn should_filter_labels(&self) -> bool {
+    self.match_bit(2)
   }
 }
 
@@ -72,6 +80,7 @@ pub struct ContainersConfig {
   pub consecutive_failures: u16,
   pub hard_failures: u16,
   pub run_on_failure: String,
+  pub filter_self: String
 }
 
 #[derive(Debug, Deserialize)]
@@ -98,7 +107,7 @@ pub fn get_settings() -> Result<Config, String> {
   settings
     // Add in `./Settings.toml`
     .merge(configuration::File::with_name("settings"))
-    .map_err(|_| "Cannot find the settings file")?
+    .map_err(|e| e.to_string())?
     // Add in settings from the environment (with a prefix of APP)
     // Eg.. `APP_DEBUG=1 ./target/app` would set the `debug` key
     .merge(configuration::Environment::with_prefix("APP"))
@@ -111,17 +120,16 @@ pub fn get_settings() -> Result<Config, String> {
   )
 }
 
-impl Default for Config {
-  fn default() -> Self {
+impl Config {
+  fn default() -> Result<Self, String> {
     let config_str = include_str!("../settings.toml");
     let mut settings = configuration::Config::default();
     settings
       .merge(configuration::File::from_str(
         config_str,
         configuration::FileFormat::Toml,
-      ))
-      .unwrap();
-    settings.try_into::<Config>().unwrap()
+      )).map_err(|e| e.to_string())?;
+    Ok(settings.try_into::<Config>().map_err(|e| e.to_string())?)
   }
 }
 
@@ -141,12 +149,23 @@ mod tests {
   #[test]
   fn apply_to_test() {
     let mut v = Vec::new();
-    assert_eq!(ApplyTo::from_vec(&v).unwrap(), ApplyTo::DontApply);
+    let mut apply_to = ApplyTo::from_vec(&v).unwrap();
+    assert!(apply_to.should_filter_images() == false);
+    assert!(apply_to.mask == 0b0000_0000);
     v.push("image".to_string());
-    assert_eq!(ApplyTo::from_vec(&v).unwrap(), ApplyTo::Image);
+    apply_to = ApplyTo::from_vec(&v).unwrap();
+    println!("hha. {:#08b}, res: {}", apply_to.mask, apply_to.match_bit(6));
+    assert!(apply_to.should_filter_images() == true);
+    assert!(apply_to.mask == 0b0000_0010);
     v.push("name".to_string());
-    assert_eq!(ApplyTo::from_vec(&v).unwrap(), ApplyTo::Both);
+    apply_to = ApplyTo::from_vec(&v).unwrap();
+    assert!(apply_to.should_filter_images() == true);
+    assert!(apply_to.should_filter_names() == true);
+    assert!(apply_to.mask == 0b0000_0011);
     v.remove(0);
-    assert_eq!(ApplyTo::from_vec(&v).unwrap(), ApplyTo::Name);
+    v.push("label".to_string());
+    apply_to = ApplyTo::from_vec(&v).unwrap();
+    assert!(apply_to.should_filter_names() == true);
+    assert!(apply_to.should_filter_labels() == true);
   }
 }
