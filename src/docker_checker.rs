@@ -35,7 +35,11 @@ impl<'a> DockerChecker<'a> {
     pub fn new(connect_str: &str, finished: Arc<AtomicBool>, config: &'a Config) -> Result<Self, String> {
         let client = DockerChecker::get_new_client(connect_str)?;
         let re = Regex::new(&config.containers.filter_by).map_err(|e| e.to_string())?;
-        let self_re = Regex::new(&config.containers.filter_self).map_err(|e| e.to_string())?;
+        let self_re = match &config.containers.filter_self {
+            Some(ref self_re_pattern) => self_re_pattern,
+            None => r#"^\b$"#, // shouldn't match anything. Shouldn't be too expencive for underlying RE engine
+        };
+        let self_re = Regex::new(self_re).map_err(|e| e.to_string())?;
         Ok(Self {
             client,
             is_finished: finished,
@@ -73,20 +77,29 @@ impl<'a> DockerChecker<'a> {
             result |= match i.Labels {
                 Some(ref map) => map
                     .iter()
-                    .filter(|(ref name, ref value)| {
-                        ((re.is_match(name) || self_re.is_match(name))
-                            || (re.is_match(value) || self_re.is_match(value)))
-                    })
+                    .filter(
+                        |(ref name, ref value)| match self.config.containers.label_filters.get(*name) {
+                            Some(ref label_re) => label_re.is_match(value),
+                            None => false,
+                        },
+                    )
                     .peekable()
                     .peek()
                     .is_some(),
                 None => false,
             }
         }
+
         if result {
             // label filter returned match - bail out
             return !result;
         }
+        /* @FIXME:/DOCME: This is still working incorrectly/ obscure
+            Firstly, if re is a wildcard pattern ".*", then it would greedy match everything
+            self_re should take a priority and bail out earlier.
+            Otherwise it should be documented somehow and point the user towards labels which, in turn, allows
+            more granular filtering
+        */
 
         if apply_to.should_filter_names() {
             result |= i
@@ -199,7 +212,7 @@ mod tests {
 
         // filter by labels
         let mut map = HashMap::new();
-        map.entry("im.lain.docker-checker".to_string())
+        map.entry("im.lain.docker-check".to_string())
             .or_insert("skipme".to_string());
         assert!(
             !dc.filter_containers(&create_mock_container(None, Some("filter_me".to_string()), Some(map))),

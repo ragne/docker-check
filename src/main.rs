@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 mod docker_checker;
+mod label_filters;
 extern crate config as configuration;
 extern crate ctrlc;
 
@@ -173,8 +174,9 @@ fn main() {
     // But there are a bit of unwraps scattered over the place
     setup_panic!();
     let settings = &SETTINGS;
-    debug!("Got settings: {:?}", **settings);
+
     setup_logger(&settings.logging).expect("Cannot setup logger. Shouldn't be possible in most cases");
+    debug!("Got settings: {:?}", **settings);
 
     // no networking for now
     let finished = Arc::new(AtomicBool::new(false));

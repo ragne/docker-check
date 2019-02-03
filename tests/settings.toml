@@ -20,6 +20,11 @@ hard_failures = 3
 # where %c is container-id
 run_on_failure = "example/notify-slack.sh"
 
+# Note: label filters are filled separately from rest of containers config. 
+# Thats because it's a map and the parser will parse everything as map key=value until it encounters another table(section)
+[containers.label_filters]
+ "im.lain.docker-check" = "skipme"
+
 [aws]
 enabled = true
   [aws.asg]

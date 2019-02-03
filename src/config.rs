@@ -1,3 +1,4 @@
+use label_filters::LabelFilters;
 use serde::{Deserialize, Deserializer};
 
 #[derive(Debug, Deserialize)]
@@ -79,7 +80,8 @@ pub struct ContainersConfig {
     pub consecutive_failures: u16,
     pub hard_failures: u16,
     pub run_on_failure: String,
-    pub filter_self: String,
+    pub filter_self: Option<String>,
+    pub(crate) label_filters: LabelFilters,
 }
 
 #[derive(Debug, Deserialize)]
@@ -117,28 +119,9 @@ pub fn get_settings(filename: &str) -> Result<Config, String> {
         .map_err(|e| format!("Cannot parse config correctly! Nested error: {}", e.to_string()))?)
 }
 
-impl Config {
-    fn default() -> Result<Self, String> {
-        let config_str = include_str!("../settings.toml");
-        let mut settings = configuration::Config::default();
-        settings
-            .merge(configuration::File::from_str(
-                config_str,
-                configuration::FileFormat::Toml,
-            ))
-            .map_err(|e| e.to_string())?;
-        Ok(settings.try_into::<Config>().map_err(|e| e.to_string())?)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn create_config_from_default() {
-        let _ = Config::default();
-    }
-
     #[test]
     fn get_settings_should_work() {
         get_settings("settings").unwrap();
