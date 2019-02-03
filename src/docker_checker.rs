@@ -27,16 +27,22 @@ pub struct DockerChecker<'a> {
     pub client: Docker,
     pub stats: Stats<'a>,
     pub config: &'a Config,
+    self_re: Regex,
+    filter_by_re: Regex,
 }
 
 impl<'a> DockerChecker<'a> {
     pub fn new(connect_str: &str, finished: Arc<AtomicBool>, config: &'a Config) -> Result<Self, String> {
         let client = DockerChecker::get_new_client(connect_str)?;
+        let re = Regex::new(&config.containers.filter_by).map_err(|e| e.to_string())?;
+        let self_re = Regex::new(&config.containers.filter_self).map_err(|e| e.to_string())?;
         Ok(Self {
             client,
             is_finished: finished,
             stats: Rc::new(RefCell::new(HashMap::new())),
             config: &config,
+            self_re,
+            filter_by_re: re,
         })
     }
 
@@ -55,14 +61,68 @@ impl<'a> DockerChecker<'a> {
         Ok(client)
     }
 
+    fn filter_containers(&self, i: &Container) -> bool {
+        let apply_to = &self.config.containers.apply_filter_to;
+        let re = &self.filter_by_re;
+        let self_re = &self.self_re;
+        // filter containers by predicates from config
+        // should return true _if container should be passed to the callback_!
+        // false means container is filtered
+        let mut result = false;
+        if apply_to.should_filter_labels() {
+            result |= match i.Labels {
+                Some(ref map) => map
+                    .iter()
+                    .filter(|(ref name, ref value)| {
+                        ((re.is_match(name) || self_re.is_match(name))
+                            || (re.is_match(value) || self_re.is_match(value)))
+                    })
+                    .peekable()
+                    .peek()
+                    .is_some(),
+                None => false,
+            }
+        }
+        if result {
+            // label filter returned match - bail out
+            return !result;
+        }
+
+        if apply_to.should_filter_names() {
+            result |= i
+                .Names
+                .iter()
+                .filter(|&name| re.is_match(name) || self_re.is_match(name))
+                .peekable()
+                .peek()
+                .is_some();
+        } else if apply_to.should_filter_images() {
+            result |= re.is_match(&i.Image) || self_re.is_match(&i.Image);
+        }
+        result
+    }
+
+    fn retain_old_containers(&self, active_containers: &mut Vec<String>, k: &String, v: &mut ContainerStats) -> bool {
+        let result = active_containers.contains(k);
+        if !result {
+            let not_seen_for = v.not_seen_since.get_or_insert(Instant::now());
+            if Instant::now().duration_since(*not_seen_for) >= Duration::from_secs(self.config.docker.purge_unseen) {
+                warn!(
+                    "Retain container {} from because it hasn't been active for at least {} seconds!",
+                    k, self.config.docker.purge_unseen
+                );
+            } else {
+                return !result;
+            }
+        }
+        result
+    }
+
     pub fn watch_for(
         &mut self,
         sleep_for: Duration,
         callback: fn(&DockerChecker, &Container) -> (),
     ) -> Result<(), String> {
-        let re = Regex::new(&self.config.containers.filter_by).map_err(|e| e.to_string())?;
-        let self_re = Regex::new(&self.config.containers.filter_self).map_err(|e| e.to_string())?;
-        let apply_to = &self.config.containers.apply_filter_to;
         let mut active_containers: Vec<String> = Vec::new();
         while !self.is_finished.load(Ordering::Relaxed) {
             active_containers.clear();
@@ -72,55 +132,14 @@ impl<'a> DockerChecker<'a> {
                 .list_containers(None, None, None, filter)
                 .map_err(|e| error!("Error listing containers: {}", e))
                 .unwrap_or(Vec::new());
-            containers
-                .iter()
-                .filter(|&i| {
-                    let mut result = false;
-                    if apply_to.should_filter_labels() {
-                        result = match i.Labels {
-                            Some(ref map) => {
-                                map.keys().filter(|&name| re.is_match(name) || self_re.is_match(name))
-                            .peekable()
-                            .peek()
-                            .is_some()
-                            },
-                            None => false
-                        }
-                    }
-
-                    if apply_to.should_filter_names() {
-                        
-                        result = i
-                            .Names
-                            .iter()
-                            .filter(|&name| re.is_match(name) || self_re.is_match(name))
-                            .peekable()
-                            .peek()
-                            .is_some();
-                    } else if apply_to.should_filter_images() {
-                        result |= re.is_match(&i.Image) || self_re.is_match(&i.Image) ;
-                    }
-                    result
-                })
-                .for_each(|c| {
-                    active_containers.push(c.Id.clone());
-                    trace!("Got container {:?}: calling callback", c);
-                    callback(&self, &c);
-                });
-            self.stats.borrow_mut().retain(|k, v| {
-                let result = active_containers.contains(&k);
-                if !result {
-                    let not_seen_for = v.not_seen_since.get_or_insert(Instant::now());
-                    if Instant::now().duration_since(*not_seen_for)
-                        >= Duration::from_secs(self.config.docker.purge_unseen)
-                    {
-                        warn!("Retain container {} from because it hasn't been active for at least {} seconds!", k, self.config.docker.purge_unseen);
-                    } else {
-                        return !result;
-                    }
-                }
-                result
+            containers.iter().filter(|&i| self.filter_containers(i)).for_each(|c| {
+                active_containers.push(c.Id.clone());
+                trace!("Got container {:?}: calling callback", c);
+                callback(&self, &c);
             });
+            self.stats
+                .borrow_mut()
+                .retain(|k, v| self.retain_old_containers(&mut active_containers, k, v));
             thread::sleep(sleep_for);
         }
         Ok(())

@@ -11,7 +11,7 @@ purge_unseen = 100
 
 [containers]
 filter_by = ".*"
-filter_self = "/docker-checker"
+filter_self = "skipme"
 apply_filter_to = ['name', 'image']
 consecutive_failures = 5
 hard_failures = 3
