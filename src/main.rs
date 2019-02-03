@@ -29,15 +29,16 @@ pub mod config;
 mod run_command;
 
 use config::LoggingConfig;
-use std::str::FromStr;
 use std::process;
+use std::str::FromStr;
 
 lazy_static! {
     static ref SETTINGS: config::Config = {
-        match config::get_settings() {
+        match config::get_settings("settings") {
             Ok(config) => config,
-            Err(e) => {println!("[ERROR]: Cannot read config. Error: {}", e);
-                    process::exit(0x0100);
+            Err(e) => {
+                println!("[ERROR]: Cannot read config. Error: {}", e);
+                process::exit(0x0100);
             }
         }
     };
@@ -159,7 +160,10 @@ fn check_docker_containers(finished: Arc<AtomicBool>) -> Result<(), String> {
             debug!("Container {} is in state: {}", &info.Name, container_state);
         }
     })
-    .map_err(|e| {error!("Error getting info: {}", e); e.to_string()})?;
+    .map_err(|e| {
+        error!("Error getting info: {}", e);
+        e.to_string()
+    })?;
 
     Ok(())
 }

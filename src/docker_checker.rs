@@ -61,7 +61,7 @@ impl<'a> DockerChecker<'a> {
         Ok(client)
     }
 
-    fn filter_containers(&self, i: &Container) -> bool {
+    pub(super) fn filter_containers(&self, i: &Container) -> bool {
         let apply_to = &self.config.containers.apply_filter_to;
         let re = &self.filter_by_re;
         let self_re = &self.self_re;
@@ -102,7 +102,12 @@ impl<'a> DockerChecker<'a> {
         result
     }
 
-    fn retain_old_containers(&self, active_containers: &mut Vec<String>, k: &String, v: &mut ContainerStats) -> bool {
+    pub(super) fn retain_old_containers(
+        &self,
+        active_containers: &mut Vec<String>,
+        k: &String,
+        v: &mut ContainerStats,
+    ) -> bool {
         let result = active_containers.contains(k);
         if !result {
             let not_seen_for = v.not_seen_since.get_or_insert(Instant::now());
@@ -143,5 +148,62 @@ impl<'a> DockerChecker<'a> {
             thread::sleep(sleep_for);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use config;
+    use dockworker::container::{Container, HostConfig, Port};
+
+    fn create_mock_container(
+        name: Option<String>,
+        image: Option<String>,
+        labels: Option<HashMap<String, String>>,
+    ) -> Container {
+        Container {
+            Id: "dfdb8ee577c1".to_string(),
+            Image: image.unwrap_or("ce94baa47eed".to_string()),
+            Status: "running".to_string(),
+            Command: "cmd".to_string(),
+            Created: 1549220249,
+            Names: vec![name.unwrap_or("something_useful".to_string()); 1],
+            Ports: Vec::<Port>::new(),
+            SizeRw: Some(42), // I guess it is optional on Mac.
+            SizeRootFs: Some(67),
+            Labels: labels,
+            HostConfig: HostConfig {
+                NetworkMode: "bridge".to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn filter_containers_test() {
+        let settings = config::get_settings("tests/settings").unwrap();
+        let finished = Arc::new(AtomicBool::new(false));
+        let dc = DockerChecker::new(&settings.docker.connect_uri, finished, &settings).unwrap();
+
+        // filter by name
+        assert!(
+            dc.filter_containers(&create_mock_container(None, Some("filter_me".to_string()), None)),
+            "Should not be filtered!"
+        );
+
+        // filter by image
+        assert!(
+            dc.filter_containers(&create_mock_container(Some("Random-image-id".to_string()), None, None)),
+            "Should not be filtered!"
+        );
+
+        // filter by labels
+        let mut map = HashMap::new();
+        map.entry("im.lain.docker-checker".to_string())
+            .or_insert("skipme".to_string());
+        assert!(
+            !dc.filter_containers(&create_mock_container(None, Some("filter_me".to_string()), Some(map))),
+            "Should be filtered by label!"
+        );
     }
 }
