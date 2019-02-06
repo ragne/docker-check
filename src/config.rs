@@ -16,12 +16,6 @@ pub struct DockerConfig {
 
 #[derive(Debug, PartialEq)]
 pub struct ApplyTo {
-    // Name,
-    // Image,
-    // Label,
-    // Both,
-    // All,
-    // DontApply,
     mask: u8,
 }
 
@@ -44,7 +38,7 @@ impl ApplyTo {
     fn from_vec(v: &Vec<String>) -> std::result::Result<Self, ()> {
         let mut apply_bytes: u8 = 0b0000_0000;
         // Name, image, label
-        v.iter().for_each(|x| match x.as_str() {
+        v.iter().for_each(|x| match x.to_lowercase().as_str() {
             "name" => {
                 apply_bytes |= 0b0000_0001;
             }
@@ -143,7 +137,7 @@ mod tests {
         assert!(apply_to.should_filter_names() == true);
         assert!(apply_to.mask == 0b0000_0011);
         v.remove(0);
-        v.push("label".to_string());
+        v.push("LABEL".to_string());
         apply_to = ApplyTo::from_vec(&v).unwrap();
         assert!(apply_to.should_filter_names() == true);
         assert!(apply_to.should_filter_labels() == true);

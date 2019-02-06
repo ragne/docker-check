@@ -4,8 +4,11 @@ use std::thread;
 use std::time::Duration;
 mod docker_checker;
 mod label_filters;
+mod webserver;
 extern crate config as configuration;
 extern crate ctrlc;
+#[macro_use]
+extern crate warp;
 
 extern crate os_pipe;
 extern crate regex;
@@ -72,10 +75,17 @@ use dockworker::container::{Container, HealthState};
 
 fn check_docker_containers(finished: Arc<AtomicBool>) -> Result<(), String> {
     let mut dc = DockerChecker::new(&SETTINGS.docker.connect_uri, finished, &*SETTINGS)?;
+    
+    let cloned_stats = dc.stats.clone();
+    thread::spawn(move || {
+        let server = HealthCheckServer::new([127, 0, 0, 1], 3030, cloned_stats);
+        server.serve();
+    });
+
     dc.watch_for(Duration::from_secs(2), |this: &DockerChecker, container: &Container| {
         let info;
         let client = &this.client;
-        let stats = &mut this.stats.borrow_mut();
+        let stats = &mut this.stats.write().unwrap();
         let config = &this.config;
         match client.container_info(container) {
             Ok(x) => {
@@ -168,6 +178,8 @@ fn check_docker_containers(finished: Arc<AtomicBool>) -> Result<(), String> {
 
     Ok(())
 }
+
+use webserver::HealthCheckServer;
 
 fn main() {
     // At least that will allow some reports (hope it'll never fire though)

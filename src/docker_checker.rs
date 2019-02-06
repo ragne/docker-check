@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -20,12 +20,12 @@ pub struct ContainerStats {
 }
 
 // * Possible optimization: make this hashmap transient (having a entries with activity time, and if they aren't active for $time then purge them from hashmap)
-pub type Stats<'a> = Rc<RefCell<HashMap<String, ContainerStats>>>;
+pub type Stats = Arc<RwLock<HashMap<String, ContainerStats>>>;
 
 pub struct DockerChecker<'a> {
     is_finished: Arc<AtomicBool>,
     pub client: Docker,
-    pub stats: Stats<'a>,
+    pub stats: Stats,
     pub config: &'a Config,
     self_re: Regex,
     filter_by_re: Regex,
@@ -43,7 +43,7 @@ impl<'a> DockerChecker<'a> {
         Ok(Self {
             client,
             is_finished: finished,
-            stats: Rc::new(RefCell::new(HashMap::new())),
+            stats: Arc::new(RwLock::new(HashMap::new())),
             config: &config,
             self_re,
             filter_by_re: re,
@@ -155,8 +155,7 @@ impl<'a> DockerChecker<'a> {
                 trace!("Got container {:?}: calling callback", c);
                 callback(&self, &c);
             });
-            self.stats
-                .borrow_mut()
+            self.stats.write().unwrap()
                 .retain(|k, v| self.retain_old_containers(&mut active_containers, k, v));
             thread::sleep(sleep_for);
         }

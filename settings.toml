@@ -1,6 +1,6 @@
 [logging]
 checker = "debug"
-default = "warn"
+default = "info"
 
 [docker]
 connect_uri = "unix:///var/run/docker.sock"
@@ -10,8 +10,15 @@ tls = true
 purge_unseen = 100
 
 [containers]
+# if you will use default catch-all patter and you'll run docker-check in container you should filter it by label or adjust the filter regex
 filter_by = ".*"
+# Allows to filter container with docker-check based on that regex. 
 filter_self = "skipme"
+# Regulates which fields from docker api are used in filtering containers
+# Valid values are: 
+#  - name
+#  - image
+#  - label
 apply_filter_to = ['name', 'image', 'label']
 consecutive_failures = 5
 hard_failures = 3
