@@ -9,13 +9,14 @@ use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Serialize)]
 pub struct ContainerStats {
     // (4294967295 * 2) / 60 / 60 / 24 / 365
     // (u32.MAX * 2 second tick) / mins / hours / days / years = 272 years should be enough for everyone
     pub count: u32,
     pub restarts: u32,
     pub consecutive_failures: u16,
+    #[serde(skip_serializing)]
     pub not_seen_since: Option<Instant>,
 }
 
